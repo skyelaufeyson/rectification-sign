@@ -25,25 +25,42 @@
       overflow: hidden;
     }
     .header {
-      padding: 14px 16px 8px;
+      padding: 12px 16px 6px;
       text-align: center;
       background: #ffffff;
       border-bottom: 1px solid #e2e8f0;
+      flex-shrink: 0;
     }
     .header h1 {
-      font-size: 17px;
+      font-size: 16px;
       font-weight: 700;
       color: #1e293b;
     }
     .header p {
-      font-size: 13px;
+      font-size: 12px;
       color: #64748b;
-      margin-top: 3px;
+      margin-top: 2px;
+    }
+    /* Debug Bar */
+    .debug-bar {
+      background: #0f172a;
+      color: #38bdf8;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 4px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .debug-status {
+      color: #4ade80;
+      font-weight: bold;
     }
     .canvas-container {
       flex: 1;
       position: relative;
-      margin: 12px;
+      margin: 8px 10px;
       background: #ffffff;
       border: 2px dashed #cbd5e1;
       border-radius: 12px;
@@ -61,7 +78,7 @@
     }
     .baseline {
       position: absolute;
-      bottom: 45px;
+      bottom: 30px;
       left: 20px;
       right: 20px;
       border-bottom: 1px dashed #94a3b8;
@@ -69,19 +86,20 @@
       display: flex;
       justify-content: space-between;
       color: #94a3b8;
-      font-size: 12px;
+      font-size: 11px;
       padding-bottom: 4px;
     }
     .footer {
-      padding: 12px 16px 16px;
+      padding: 10px 14px 14px;
       background: #ffffff;
       border-top: 1px solid #e2e8f0;
       display: flex;
       gap: 10px;
+      flex-shrink: 0;
     }
     .btn {
       flex: 1;
-      padding: 14px 10px;
+      padding: 13px 10px;
       font-size: 15px;
       font-weight: 600;
       border-radius: 8px;
@@ -105,13 +123,40 @@
       background: #92D050;
       color: #0f3d0f;
     }
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    /* Toast Alert */
+    #toast {
+      display: none;
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(15, 23, 42, 0.92);
+      color: #ffffff;
+      padding: 16px 24px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 500;
+      text-align: center;
+      z-index: 999;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+    }
   </style>
 </head>
 <body>
 
   <div class="header">
     <h1>✍️ Tandatangan Kontraktor</h1>
-    <p>Sila tandatangan menggunakan jari atau stylus di dalam kotak</p>
+    <p>Sila tandatangan menggunakan jari di dalam kotak</p>
+  </div>
+
+  <!-- Live Debug Info Bar -->
+  <div class="debug-bar">
+    <span id="dbgInfo">Titik: 0 | Saiz: 0 B</span>
+    <span class="debug-status" id="dbgStatus">● Sedia (V2 Vektor)</span>
   </div>
 
   <div class="canvas-container" id="container">
@@ -131,38 +176,54 @@
     </button>
   </div>
 
+  <div id="toast"></div>
+
   <script>
-    // Initialize Telegram WebApp
     const tg = window.Telegram?.WebApp;
     if (tg) {
       tg.ready();
       tg.expand();
-      try {
-        tg.enableClosingConfirmation();
-      } catch (e) {}
+      try { tg.enableClosingConfirmation(); } catch (e) {}
     }
 
     const canvas = document.getElementById('sigPad');
     const container = document.getElementById('container');
+    const dbgInfo = document.getElementById('dbgInfo');
+    const dbgStatus = document.getElementById('dbgStatus');
+    const toast = document.getElementById('toast');
     const ctx = canvas.getContext('2d');
+    
     let isDrawing = false;
-    let hasDrawn = false;
+    let strokes = []; // [ [ [x, y], ... ], ... ]
+    let currentStroke = [];
     let lastX = 0;
     let lastY = 0;
+    let totalPoints = 0;
 
-    // Retina display / High DPI scaling
+    function showToast(msg, duration = 2500) {
+      toast.innerText = msg;
+      toast.style.display = 'block';
+      if (duration > 0) {
+        setTimeout(() => { toast.style.display = 'none'; }, duration);
+      }
+    }
+
+    function updateDebugStats() {
+      totalPoints = strokes.reduce((acc, s) => acc + s.length, 0) + currentStroke.length;
+      const roughBytes = totalPoints * 7 + strokes.length * 10;
+      dbgInfo.innerText = `Titik: ${totalPoints} | Saiz: ~${roughBytes} B / 4096 B`;
+      if (roughBytes > 3800) {
+        dbgStatus.style.color = '#f87171';
+        dbgStatus.innerText = '● Had Maksimum';
+      } else {
+        dbgStatus.style.color = '#4ade80';
+        dbgStatus.innerText = '● Sedia';
+      }
+    }
+
     function resizeCanvas() {
       const rect = container.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
-      
-      // Save current drawing if any
-      let tempCanvas = null;
-      if (hasDrawn) {
-        tempCanvas = document.createElement('canvas');
-        tempCanvas.width = canvas.width;
-        tempCanvas.height = canvas.height;
-        tempCanvas.getContext('2d').drawImage(canvas, 0, 0);
-      }
 
       canvas.width = rect.width * dpr;
       canvas.height = rect.height * dpr;
@@ -170,11 +231,32 @@
 
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      ctx.lineWidth = 2.8;
-      ctx.strokeStyle = '#000000'; // Authentic Black Ink
+      ctx.lineWidth = 3.0;
+      ctx.strokeStyle = '#000000';
 
-      if (tempCanvas && hasDrawn) {
-        ctx.drawImage(tempCanvas, 0, 0, rect.width, rect.height);
+      redrawAllStrokes();
+    }
+
+    function redrawAllStrokes() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (const stroke of strokes) {
+        if (!stroke || stroke.length === 0) continue;
+        if (stroke.length === 1) {
+          ctx.beginPath();
+          ctx.arc(stroke[0][0], stroke[0][1], 1.5, 0, Math.PI * 2);
+          ctx.fillStyle = '#000000';
+          ctx.fill();
+        } else {
+          ctx.beginPath();
+          ctx.moveTo(stroke[0][0], stroke[0][1]);
+          for (let i = 1; i < stroke.length; i++) {
+            const midX = (stroke[i - 1][0] + stroke[i][0]) / 2;
+            const midY = (stroke[i - 1][1] + stroke[i][1]) / 2;
+            ctx.quadraticCurveTo(stroke[i - 1][0], stroke[i - 1][1], midX, midY);
+          }
+          ctx.lineTo(stroke[stroke.length - 1][0], stroke[stroke.length - 1][1]);
+          ctx.stroke();
+        }
       }
     }
 
@@ -187,23 +269,25 @@
       const clientX = e.touches ? e.touches[0].clientX : e.clientX;
       const clientY = e.touches ? e.touches[0].clientY : e.clientY;
       return {
-        x: clientX - rect.left,
-        y: clientY - rect.top
+        x: Math.round(clientX - rect.left),
+        y: Math.round(clientY - rect.top)
       };
     }
 
     function startDrawing(e) {
       e.preventDefault();
       isDrawing = true;
-      hasDrawn = true;
       const pos = getCoords(e);
       lastX = pos.x;
       lastY = pos.y;
       
+      currentStroke = [[lastX, lastY]];
+
       ctx.beginPath();
       ctx.moveTo(lastX, lastY);
-      ctx.lineTo(lastX + 0.1, lastY + 0.1); // Ensure single dot is captured
+      ctx.lineTo(lastX + 0.1, lastY + 0.1);
       ctx.stroke();
+      updateDebugStats();
     }
 
     function draw(e) {
@@ -211,31 +295,42 @@
       e.preventDefault();
       const pos = getCoords(e);
       
-      ctx.beginPath();
-      ctx.moveTo(lastX, lastY);
-      // Smooth interpolation
+      const dx = pos.x - lastX;
+      const dy = pos.y - lastY;
+      if (dx * dx + dy * dy < 4) return; // filter jitter
+
       const midX = (lastX + pos.x) / 2;
       const midY = (lastY + pos.y) / 2;
+
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
       ctx.quadraticCurveTo(lastX, lastY, midX, midY);
       ctx.lineTo(pos.x, pos.y);
       ctx.stroke();
 
       lastX = pos.x;
       lastY = pos.y;
+      currentStroke.push([lastX, lastY]);
+      updateDebugStats();
     }
 
     function stopDrawing(e) {
       if (!isDrawing) return;
       isDrawing = false;
+      if (currentStroke.length > 0) {
+        strokes.push(currentStroke);
+        currentStroke = [];
+      }
+      updateDebugStats();
     }
 
-    // Touch events (Mobile)
+    // Touch events
     canvas.addEventListener('touchstart', startDrawing, { passive: false });
     canvas.addEventListener('touchmove', draw, { passive: false });
     canvas.addEventListener('touchend', stopDrawing, { passive: false });
     canvas.addEventListener('touchcancel', stopDrawing, { passive: false });
 
-    // Mouse events (Desktop testing)
+    // Mouse events
     canvas.addEventListener('mousedown', startDrawing);
     canvas.addEventListener('mousemove', draw);
     canvas.addEventListener('mouseup', stopDrawing);
@@ -243,84 +338,69 @@
 
     // Clear Button
     document.getElementById('btnClear').addEventListener('click', () => {
+      strokes = [];
+      currentStroke = [];
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      hasDrawn = false;
+      updateDebugStats();
       if (tg?.HapticFeedback) {
         tg.HapticFeedback.impactOccurred('light');
       }
     });
 
-    // Auto-trim transparent borders
-    function trimCanvas(origCanvas) {
-      const origCtx = origCanvas.getContext('2d');
-      const w = origCanvas.width;
-      const h = origCanvas.height;
-      const imgData = origCtx.getImageData(0, 0, w, h);
-      const data = imgData.data;
-
-      let minX = w, minY = h, maxX = 0, maxY = 0;
-      let found = false;
-
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const alpha = data[(y * w + x) * 4 + 3];
-          if (alpha > 10) {
-            found = true;
-            if (x < minX) minX = x;
-            if (x > maxX) maxX = x;
-            if (y < minY) minY = y;
-            if (y > maxY) maxY = y;
-          }
-        }
-      }
-
-      if (!found) return null;
-
-      // Add a small padding around the trimmed signature
-      const pad = Math.round(15 * (window.devicePixelRatio || 1));
-      minX = Math.max(0, minX - pad);
-      minY = Math.max(0, minY - pad);
-      maxX = Math.min(w, maxX + pad);
-      maxY = Math.min(h, maxY + pad);
-
-      const cropW = maxX - minX;
-      const cropH = maxY - minY;
-
-      const trimmed = document.createElement('canvas');
-      trimmed.width = cropW;
-      trimmed.height = cropH;
-      trimmed.getContext('2d').drawImage(
-        origCanvas,
-        minX, minY, cropW, cropH,
-        0, 0, cropW, cropH
-      );
-      return trimmed;
-    }
-
     // Submit Button
-    document.getElementById('btnSubmit').addEventListener('click', () => {
-      if (!hasDrawn) {
-        alert('Sila buat tandatangan terlebih dahulu sebelum menekan butang Sahkan.');
+    const btnSubmit = document.getElementById('btnSubmit');
+    btnSubmit.addEventListener('click', () => {
+      if (strokes.length === 0) {
+        alert('Sila tandatangan terlebih dahulu sebelum tekan Sahkan.');
         return;
       }
 
-      const trimmed = trimCanvas(canvas);
-      if (!trimmed) {
-        alert('Sila buat tandatangan terlebih dahulu.');
-        return;
+      btnSubmit.disabled = true;
+      btnSubmit.innerText = '⏳ Menghantar...';
+
+      // Build compact JSON payload
+      let simplified = strokes.map(s => s.map(pt => [Math.round(pt[0]), Math.round(pt[1])]));
+      let payload = JSON.stringify({ s: simplified });
+
+      // Downsample if payload exceeds safe margin
+      let step = 2;
+      while (payload.length > 3600 && step < 8) {
+        simplified = strokes.map(s => {
+          if (s.length <= 2) return s;
+          const r = [s[0]];
+          for (let i = 1; i < s.length - 1; i += step) {
+            r.push([Math.round(s[i][0]), Math.round(s[i][1])]);
+          }
+          r.push(s[s.length - 1]);
+          return r;
+        });
+        payload = JSON.stringify({ s: simplified });
+        step++;
       }
 
-      const dataUrl = trimmed.toDataURL('image/png');
+      const byteSize = new Blob([payload]).size;
+      showToast(`🚀 Menghantar ${byteSize} bytes ke bot...`, 0);
 
       if (tg?.HapticFeedback) {
         tg.HapticFeedback.notificationOccurred('success');
       }
 
-      // Send base64 data to Telegram Bot
       if (tg && tg.sendData) {
-        tg.sendData(dataUrl);
+        try {
+          // Send to bot
+          tg.sendData(payload);
+          setTimeout(() => {
+            try { tg.close(); } catch(e) {}
+          }, 300);
+        } catch (err) {
+          showToast(`❌ Ralat: ${err.message}`, 4000);
+          btnSubmit.disabled = false;
+          btnSubmit.innerText = '✅ Sahkan Tandatangan';
+        }
       } else {
-        alert('Tandatangan berjaya dijana! (Ujian browser: tiada Telegram WebApp context)');
+        showToast(`✅ Data ${byteSize} bytes sedia. Buka melalui Telegram untuk menghantar.`, 4000);
+        btnSubmit.disabled = false;
+        btnSubmit.innerText = '✅ Sahkan Tandatangan';
       }
     });
   </script>
