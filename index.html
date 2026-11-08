@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Tandatangan Digital Kontraktor</title>
+  <!-- Telegram WebApp SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f4f6f8;
+      color: #333333;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+    }
+    .header {
+      padding: 14px 16px 8px;
+      text-align: center;
+      background: #ffffff;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .header h1 {
+      font-size: 17px;
+      font-weight: 700;
+      color: #1e293b;
+    }
+    .header p {
+      font-size: 13px;
+      color: #64748b;
+      margin-top: 3px;
+    }
+    .canvas-container {
+      flex: 1;
+      position: relative;
+      margin: 12px;
+      background: #ffffff;
+      border: 2px dashed #cbd5e1;
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      touch-action: none;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none;
+    }
+    .baseline {
+      position: absolute;
+      bottom: 45px;
+      left: 20px;
+      right: 20px;
+      border-bottom: 1px dashed #94a3b8;
+      pointer-events: none;
+      display: flex;
+      justify-content: space-between;
+      color: #94a3b8;
+      font-size: 12px;
+      padding-bottom: 4px;
+    }
+    .footer {
+      padding: 12px 16px 16px;
+      background: #ffffff;
+      border-top: 1px solid #e2e8f0;
+      display: flex;
+      gap: 10px;
+    }
+    .btn {
+      flex: 1;
+      padding: 14px 10px;
+      font-size: 15px;
+      font-weight: 600;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: background 0.15s ease, transform 0.05s ease;
+    }
+    .btn:active {
+      transform: scale(0.98);
+    }
+    .btn-clear {
+      background: #f1f5f9;
+      color: #475569;
+      border: 1px solid #cbd5e1;
+    }
+    .btn-submit {
+      background: #92D050;
+      color: #0f3d0f;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>✍️ Tandatangan Kontraktor</h1>
+    <p>Sila tandatangan menggunakan jari atau stylus di dalam kotak</p>
+  </div>
+
+  <div class="canvas-container" id="container">
+    <canvas id="sigPad"></canvas>
+    <div class="baseline">
+      <span>✕ Tandatangan di sini</span>
+      <span>Prepared By</span>
+    </div>
+  </div>
+
+  <div class="footer">
+    <button class="btn btn-clear" id="btnClear" type="button">
+      🔄 Padam
+    </button>
+    <button class="btn btn-submit" id="btnSubmit" type="button">
+      ✅ Sahkan Tandatangan
+    </button>
+  </div>
+
+  <script>
+    // Initialize Telegram WebApp
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      tg.ready();
+      tg.expand();
+      try {
+        tg.enableClosingConfirmation();
+      } catch (e) {}
+    }
+
+    const canvas = document.getElementById('sigPad');
+    const container = document.getElementById('container');
+    const ctx = canvas.getContext('2d');
+    let isDrawing = false;
+    let hasDrawn = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    // Retina display / High DPI scaling
+    function resizeCanvas() {
+      const rect = container.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      
+      // Save current drawing if any
+      let tempCanvas = null;
+      if (hasDrawn) {
+        tempCanvas = document.createElement('canvas');
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+        tempCanvas.getContext('2d').drawImage(canvas, 0, 0);
+      }
+
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 2.8;
+      ctx.strokeStyle = '#000000'; // Authentic Black Ink
+
+      if (tempCanvas && hasDrawn) {
+        ctx.drawImage(tempCanvas, 0, 0, rect.width, rect.height);
+      }
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 150));
+    resizeCanvas();
+
+    function getCoords(e) {
+      const rect = canvas.getBoundingClientRect();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      return {
+        x: clientX - rect.left,
+        y: clientY - rect.top
+      };
+    }
+
+    function startDrawing(e) {
+      e.preventDefault();
+      isDrawing = true;
+      hasDrawn = true;
+      const pos = getCoords(e);
+      lastX = pos.x;
+      lastY = pos.y;
+      
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+      ctx.lineTo(lastX + 0.1, lastY + 0.1); // Ensure single dot is captured
+      ctx.stroke();
+    }
+
+    function draw(e) {
+      if (!isDrawing) return;
+      e.preventDefault();
+      const pos = getCoords(e);
+      
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+      // Smooth interpolation
+      const midX = (lastX + pos.x) / 2;
+      const midY = (lastY + pos.y) / 2;
+      ctx.quadraticCurveTo(lastX, lastY, midX, midY);
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
+
+      lastX = pos.x;
+      lastY = pos.y;
+    }
+
+    function stopDrawing(e) {
+      if (!isDrawing) return;
+      isDrawing = false;
+    }
+
+    // Touch events (Mobile)
+    canvas.addEventListener('touchstart', startDrawing, { passive: false });
+    canvas.addEventListener('touchmove', draw, { passive: false });
+    canvas.addEventListener('touchend', stopDrawing, { passive: false });
+    canvas.addEventListener('touchcancel', stopDrawing, { passive: false });
+
+    // Mouse events (Desktop testing)
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousemove', draw);
+    canvas.addEventListener('mouseup', stopDrawing);
+    canvas.addEventListener('mouseleave', stopDrawing);
+
+    // Clear Button
+    document.getElementById('btnClear').addEventListener('click', () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      hasDrawn = false;
+      if (tg?.HapticFeedback) {
+        tg.HapticFeedback.impactOccurred('light');
+      }
+    });
+
+    // Auto-trim transparent borders
+    function trimCanvas(origCanvas) {
+      const origCtx = origCanvas.getContext('2d');
+      const w = origCanvas.width;
+      const h = origCanvas.height;
+      const imgData = origCtx.getImageData(0, 0, w, h);
+      const data = imgData.data;
+
+      let minX = w, minY = h, maxX = 0, maxY = 0;
+      let found = false;
+
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const alpha = data[(y * w + x) * 4 + 3];
+          if (alpha > 10) {
+            found = true;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+
+      if (!found) return null;
+
+      // Add a small padding around the trimmed signature
+      const pad = Math.round(15 * (window.devicePixelRatio || 1));
+      minX = Math.max(0, minX - pad);
+      minY = Math.max(0, minY - pad);
+      maxX = Math.min(w, maxX + pad);
+      maxY = Math.min(h, maxY + pad);
+
+      const cropW = maxX - minX;
+      const cropH = maxY - minY;
+
+      const trimmed = document.createElement('canvas');
+      trimmed.width = cropW;
+      trimmed.height = cropH;
+      trimmed.getContext('2d').drawImage(
+        origCanvas,
+        minX, minY, cropW, cropH,
+        0, 0, cropW, cropH
+      );
+      return trimmed;
+    }
+
+    // Submit Button
+    document.getElementById('btnSubmit').addEventListener('click', () => {
+      if (!hasDrawn) {
+        alert('Sila buat tandatangan terlebih dahulu sebelum menekan butang Sahkan.');
+        return;
+      }
+
+      const trimmed = trimCanvas(canvas);
+      if (!trimmed) {
+        alert('Sila buat tandatangan terlebih dahulu.');
+        return;
+      }
+
+      const dataUrl = trimmed.toDataURL('image/png');
+
+      if (tg?.HapticFeedback) {
+        tg.HapticFeedback.notificationOccurred('success');
+      }
+
+      // Send base64 data to Telegram Bot
+      if (tg && tg.sendData) {
+        tg.sendData(dataUrl);
+      } else {
+        alert('Tandatangan berjaya dijana! (Ujian browser: tiada Telegram WebApp context)');
+      }
+    });
+  </script>
+</body>
+</html>
